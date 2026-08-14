@@ -1,0 +1,20 @@
+:root {
+  color: #172033;
+  background: #f5f7fb;
+  font-family: Arial, "Noto Sans KR", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.shell h1 { margin: 0; font-size: clamp(48px, 10vw, 96px); }
+.shell p { color: #596579; }
+.shell .eyebrow { color: #2458d3; font-size: 12px; font-weight: 800; letter-spacing: .16em; }
