@@ -1,0 +1,11 @@
+{
+  "name": "Remix Remix CivicMap Taiwan",
+  "description": "台灣行政區劃與全民通報地圖系統 - CivicMap Taiwan (Regions, Interactive Map, Issue Reporting, \u0026 AI Analysis)",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
