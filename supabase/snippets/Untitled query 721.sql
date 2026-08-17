@@ -1,6 +1,6 @@
 select public.provision_staff(
     (select id
      from auth.users
-     where lower(email) = lower('itisnewdawn@gmail.com')),
-    'CP-MANAGER-0001'
+     where lower(email) = lower('admin@example.com')),
+    'CP-ADMIN-REPLACE'
   );
