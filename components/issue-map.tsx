@@ -165,7 +165,7 @@ export function IssueMap({ pins = [], draft, selectedId, center, zoom, onMapClic
 
   useEffect(() => {
     if (centerLatitude !== undefined && centerLongitude !== undefined && map.current) {
-      map.current.setView([centerLatitude, centerLongitude], zoom ?? map.current.getZoom());
+      map.current.setView([centerLatitude, centerLongitude], zoom ?? map.current.getZoom(), { animate: false });
     }
   }, [centerLatitude, centerLongitude, zoom]);
 
@@ -199,6 +199,7 @@ export function IssueMap({ pins = [], draft, selectedId, center, zoom, onMapClic
       }
       const leaflet = await import("leaflet");
       if (map.current !== activeMap) return;
+      activeMap.setView([coords.latitude, coords.longitude], activeMap.getMaxZoom(), { animate: false });
       currentLocationLayer.current?.remove();
       currentLocationLayer.current = leaflet.circleMarker([coords.latitude, coords.longitude], {
         className: "map-current-location",
@@ -208,7 +209,6 @@ export function IssueMap({ pins = [], draft, selectedId, center, zoom, onMapClic
         fillColor: "#175cd3",
         fillOpacity: 1,
       }).bindTooltip(currentLocation.button).addTo(activeMap);
-      activeMap.setView([coords.latitude, coords.longitude], activeMap.getMaxZoom(), { animate: false });
       (currentLocationHandler.current ?? clickHandler.current)?.({ latitude: coords.latitude, longitude: coords.longitude });
       setLocating(false);
       setLocationMessage(currentLocation.button);

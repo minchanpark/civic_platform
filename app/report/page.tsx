@@ -52,6 +52,7 @@ function ReportForm() {
   const category = issueCategory(searchParams.get("category") ?? "")?.id ?? "";
   const queryDistrict = findDistrict(searchParams.get("district") ?? "")?.id;
   const [districtId, setDistrictId] = useState(queryDistrict ?? "");
+  const [mapDistrictId, setMapDistrictId] = useState(queryDistrict ?? "");
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
   const [addressLookup, setAddressLookup] = useState({ key: "", address: "", loading: false });
@@ -77,7 +78,7 @@ function ReportForm() {
   if (!category) redirect("/#category-title");
   const latitudeNumber = Number(latitude);
   const longitudeNumber = Number(longitude);
-  const selectedDistrict = findDistrict(districtId);
+  const mapDistrict = findDistrict(mapDistrictId);
   const position: Position | null = latitude && longitude
     && latitudeNumber >= TAOYUAN_BOUNDS.south && latitudeNumber <= TAOYUAN_BOUNDS.north
     && longitudeNumber >= TAOYUAN_BOUNDS.west && longitudeNumber <= TAOYUAN_BOUNDS.east
@@ -291,7 +292,7 @@ function ReportForm() {
               <p>{t("report.locationHelp")}</p>
               <label>
                 {t("report.district")}
-                <select id="district" required value={districtId} disabled={Boolean(queryDistrict)} aria-invalid={invalidFields.includes("district")} aria-describedby={invalidFields.includes("district") ? "district-error" : undefined} onChange={(event) => { setDistrictId(event.target.value); setInvalidFields((fields) => fields.filter((field) => field !== "district")); }}>
+                <select id="district" required value={districtId} disabled={Boolean(queryDistrict)} aria-invalid={invalidFields.includes("district")} aria-describedby={invalidFields.includes("district") ? "district-error" : undefined} onChange={(event) => { setDistrictId(event.target.value); setMapDistrictId(event.target.value); setInvalidFields((fields) => fields.filter((field) => field !== "district")); }}>
                   <option value="">{t("common.select")}</option>
                   {DISTRICTS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                 </select>
@@ -299,8 +300,8 @@ function ReportForm() {
               </label>
               <IssueMap
                 draft={position}
-                center={selectedDistrict}
-                zoom={selectedDistrict ? 14 : 10}
+                center={mapDistrict}
+                zoom={mapDistrict ? 14 : 10}
                 onMapClick={recurrence ? undefined : updatePosition}
                 onCurrentLocation={updatePosition}
                 ariaLabel={t("report.mapAria")}

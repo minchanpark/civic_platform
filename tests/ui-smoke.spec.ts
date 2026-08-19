@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("citizen can enter the report flow, move the map and choose either photo source", async ({ page, context }) => {
   await page.setViewportSize({ width: 425, height: 812 });
   await context.grantPermissions(["geolocation"]);
-  await context.setGeolocation({ latitude: 24.97669, longitude: 121.20916 });
+  await context.setGeolocation({ latitude: 24.953, longitude: 121.225 });
   await page.goto("/tickets");
   await expect(page.locator("#phone-access-number")).toBeVisible();
   await expect(page.getByRole("button", { name: "用手機號碼繼續" })).toBeVisible();
@@ -25,6 +25,15 @@ test("citizen can enter the report flow, move the map and choose either photo so
   await expect(map).toBeVisible();
   await expect(page.locator(".map-current-location")).toBeVisible();
   await expect(page.locator(".leaflet-control-zoom-in")).toHaveClass(/leaflet-disabled/);
+  await page.waitForTimeout(250);
+  const [initialMapBox, currentLocationBox] = await Promise.all([
+    map.boundingBox(),
+    page.locator(".map-current-location").boundingBox(),
+  ]);
+  expect(Math.abs((initialMapBox?.x ?? 0) + (initialMapBox?.width ?? 0) / 2
+    - (currentLocationBox?.x ?? 0) - (currentLocationBox?.width ?? 0) / 2)).toBeLessThan(2);
+  expect(Math.abs((initialMapBox?.y ?? 0) + (initialMapBox?.height ?? 0) / 2
+    - (currentLocationBox?.y ?? 0) - (currentLocationBox?.height ?? 0) / 2)).toBeLessThan(2);
   await page.getByRole("combobox", { name: "行政區" }).selectOption("zhongli");
   await expect(map).toHaveAttribute("data-center-latitude", "24.97669");
   await expect(map).toHaveAttribute("data-center-longitude", "121.20916");
