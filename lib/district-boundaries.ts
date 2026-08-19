@@ -28,12 +28,22 @@ function inPolygon(position: Position, polygon: Position[][]) {
   return inRing(position, polygon[0]) && !polygon.slice(1).some((hole) => inRing(position, hole));
 }
 
-export function isInsideDistrict(districtId: DistrictId, latitude: number, longitude: number) {
-  const label = DISTRICTS.find((district) => district.id === districtId)?.label;
-  const geometry = features.find((feature) => feature.properties.TOWNNAME === label)?.geometry;
-  if (!geometry) return false;
+function isInsideGeometry(geometry: Geometry, latitude: number, longitude: number) {
   const position: Position = [longitude, latitude];
   return geometry.type === "Polygon"
     ? inPolygon(position, geometry.coordinates)
     : geometry.coordinates.some((polygon) => inPolygon(position, polygon));
+}
+
+export function isInsideDistrict(districtId: DistrictId, latitude: number, longitude: number) {
+  const label = DISTRICTS.find((district) => district.id === districtId)?.label;
+  const geometry = features.find((feature) => feature.properties.TOWNNAME === label)?.geometry;
+  return geometry ? isInsideGeometry(geometry, latitude, longitude) : false;
+}
+
+export function districtAtPosition(latitude: number, longitude: number): DistrictId | null {
+  for (const district of DISTRICTS) {
+    if (isInsideDistrict(district.id, latitude, longitude)) return district.id;
+  }
+  return null;
 }

@@ -8,6 +8,7 @@ import { IssueMap } from "@/components/issue-map";
 import { CameraCapture } from "@/components/camera-capture";
 import { useAuth } from "@/components/auth-provider";
 import { useI18n } from "@/components/i18n-provider";
+import { districtAtPosition } from "@/lib/district-boundaries";
 import { signInWithPhoneOnly } from "@/lib/supabase/client";
 import {
   CITIZEN_AGE_GROUPS,
@@ -85,6 +86,16 @@ function ReportForm() {
   const positionKey = position ? `${position.latitude.toFixed(6)},${position.longitude.toFixed(6)}` : "";
   const address = addressLookup.key === positionKey ? addressLookup.address : "";
   const addressLoading = addressLookup.key === positionKey && addressLookup.loading;
+
+  const updatePosition = (next: Position) => {
+    const nextDistrictId = queryDistrict ?? districtAtPosition(next.latitude, next.longitude) ?? "";
+    setLatitude(String(next.latitude));
+    setLongitude(String(next.longitude));
+    if (!queryDistrict) setDistrictId(nextDistrictId);
+    setInvalidFields((fields) => fields.filter((field) => field !== "latitude"
+      && field !== "longitude"
+      && (field !== "district" || !nextDistrictId)));
+  };
 
   useEffect(() => {
     if (!positionKey) return;
@@ -290,16 +301,8 @@ function ReportForm() {
                 draft={position}
                 center={selectedDistrict}
                 zoom={selectedDistrict ? 14 : 10}
-                onMapClick={recurrence ? undefined : (next) => {
-                  setLatitude(String(next.latitude));
-                  setLongitude(String(next.longitude));
-                  setInvalidFields((fields) => fields.filter((field) => field !== "latitude" && field !== "longitude"));
-                }}
-                onCurrentLocation={(next) => {
-                  setLatitude(String(next.latitude));
-                  setLongitude(String(next.longitude));
-                  setInvalidFields((fields) => fields.filter((field) => field !== "latitude" && field !== "longitude"));
-                }}
+                onMapClick={recurrence ? undefined : updatePosition}
+                onCurrentLocation={updatePosition}
                 ariaLabel={t("report.mapAria")}
                 currentLocation={{
                   button: t("map.currentLocation"),

@@ -20,7 +20,7 @@ test("citizen can enter the report flow, move the map and choose either photo so
   await expect(page).toHaveURL(/\/report\?category=public_utility$/);
   await expect(page.getByRole("heading", { name: "問題類型" })).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "問題類別" })).toHaveCount(0);
-  await expect(page.getByRole("combobox", { name: "行政區" })).toHaveValue("");
+  await expect(page.getByRole("combobox", { name: "行政區" })).toHaveValue("zhongli");
   const map = page.getByRole("region", { name: "桃園陳情位置選擇地圖" });
   await expect(map).toBeVisible();
   await expect(page.locator(".map-current-location")).toBeVisible();

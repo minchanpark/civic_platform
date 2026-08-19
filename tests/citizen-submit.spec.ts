@@ -16,12 +16,12 @@ test("phone-only submission and lookup keep another phone out", async ({ page, c
   await context.grantPermissions(["geolocation"]);
   await context.setGeolocation({ latitude: 24.9937, longitude: 121.301 });
   await page.goto("/report?category=public_utility");
+  await expect(page.getByRole("combobox", { name: "行政區" })).toHaveValue("taoyuan");
   await page.getByRole("button", { name: "送出陳情" }).click();
   await expect(page.locator(".error-summary")).toBeFocused();
-  await expect(page.locator(".error-summary")).toContainText("請選擇行政區。");
+  await expect(page.locator(".error-summary")).not.toContainText("請選擇行政區。");
   await expect(page.locator(".error-summary")).toContainText("請輸入真實姓名。");
   await expect(page.locator(".error-summary")).toContainText("請輸入有效的手機號碼。");
-  await page.getByRole("combobox", { name: "行政區" }).selectOption("taoyuan");
   await page.locator("#latitude").fill("24.9937");
   await page.locator("#longitude").fill("121.301");
   await expect(page.locator("#address")).toContainText("桃園市桃園區測試路1號");
