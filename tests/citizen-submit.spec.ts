@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import sharp from "sharp";
 import { expect, test } from "@playwright/test";
 
@@ -9,10 +10,21 @@ test("phone-only submission and lookup keep another phone out", async ({ page, c
     });
     Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", { configurable: true, get: () => 32 });
     Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", { configurable: true, get: () => 32 });
-    HTMLCanvasElement.prototype.getContext = (() => ({ drawImage: () => undefined })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.toBlob = (callback) => callback(new Blob(["camera"], { type: "image/jpeg" }));
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, ...args) {
+      if (this.width === 32 && this.height === 32) return { drawImage: () => undefined } as unknown as CanvasRenderingContext2D;
+      return originalGetContext.apply(this, args);
+    } as typeof HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.toBlob = function (callback, type, quality) {
+      if (this.width === 32 && this.height === 32) {
+        callback(new Blob(["camera"], { type: "image/jpeg" }));
+        return;
+      }
+      originalToBlob.call(this, callback, type, quality);
+    };
   });
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   await context.grantPermissions(["geolocation"]);
   await context.setGeolocation({ latitude: 24.9937, longitude: 121.301 });
   await page.goto("/report?category=public_utility");
@@ -34,17 +46,34 @@ test("phone-only submission and lookup keep another phone out", async ({ page, c
   await page.locator("#contactEmail").fill("resident@example.com");
   await page.locator("#title").fill("人行道路面破損需要處理");
   await page.locator("#body").fill("人行道路面有明顯坑洞，行人經過時可能跌倒，請協助處理。");
+  const largePhoto = await sharp(randomBytes(1800 * 1800 * 3), {
+    raw: { width: 1800, height: 1800, channels: 3 },
+  }).png({ compressionLevel: 0 }).toBuffer();
+  expect(largePhoto.byteLength).toBeGreaterThan(4.5 * 1024 * 1024);
   await page.locator("#photo").setInputFiles({
-    name: "site.jpg",
-    mimeType: "image/jpeg",
-    buffer: await sharp({ create: { width: 32, height: 32, channels: 3, background: "#808080" } }).jpeg().toBuffer(),
+    name: "site.png",
+    mimeType: "image/png",
+    buffer: largePhoto,
   });
+  await expect(page.locator("#photo-help")).toHaveAttribute("data-photo-bytes", /\d+/);
+  await expect(page.locator("#photo-help")).toContainText("site.jpg");
+  const preparedPhotoBytes = Number(await page.locator("#photo-help").getAttribute("data-photo-bytes"));
+  expect(preparedPhotoBytes).toBeGreaterThan(0);
+  expect(preparedPhotoBytes).toBeLessThanOrEqual(3 * 1024 * 1024);
   await page.getByRole("button", { name: "送出陳情" }).click();
   await expect(page).toHaveURL(/\/tickets\/CP-/);
   const ticketUrl = page.url();
   await expect(page.locator(".ticket-hero")).toContainText("人行道路面破損需要處理");
   await expect(page.locator(".coordinate-note")).toContainText("桃園市桃園區測試路1號");
   await expect(page.locator(".coordinate-note")).toContainText("24.99370, 121.30100");
+
+  await page.goto("/report?category=other");
+  await expect(page.locator("#cellPhone")).toHaveValue(/^\+?886900000001$/);
+  await expect(page.locator("#cellPhone")).not.toHaveAttribute("readonly", "");
+  await page.locator("#cellPhone").fill("");
+  await expect(page.locator("#cellPhone")).toHaveValue("");
+  await page.locator("#cellPhone").fill("0900-000-002");
+  await expect(page.locator("#cellPhone")).toHaveValue("0900-000-002");
 
   await page.goto("/tickets");
   await expect(page.getByRole("button", { name: "取得驗證碼" })).toHaveCount(0);

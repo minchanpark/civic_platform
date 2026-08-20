@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { redirect, useRouter, useSearchParams } from "next/navigation";
+import { redirect, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import { CitizenFooter, CitizenHeader } from "@/components/citizen-shell";
 import { IssueMap } from "@/components/issue-map";
@@ -9,6 +9,8 @@ import { CameraCapture } from "@/components/camera-capture";
 import { useAuth } from "@/components/auth-provider";
 import { useI18n } from "@/components/i18n-provider";
 import { districtAtPosition } from "@/lib/district-boundaries";
+import { prepareIssuePhoto } from "@/lib/issue-photo-client";
+import { submitIssueForm } from "@/lib/issue-submit-client";
 import { signInWithPhoneOnly } from "@/lib/supabase/client";
 import {
   CITIZEN_AGE_GROUPS,
@@ -25,11 +27,6 @@ import {
 import type { MessageKey } from "@/lib/i18n";
 
 type Position = { latitude: number; longitude: number };
-type SubmitResult = {
-  issue?: { id: string; ticketNumber: string; status: string; createdAt: string };
-  error?: string;
-};
-
 type FieldId = "district" | "latitude" | "longitude" | "address" | "realName" | "gender" | "ageGroup" | "cellPhone" | "lineId" | "contactEmail" | "title" | "body" | "photo" | "recurrence";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FIELD_ERROR_KEYS: Record<FieldId, MessageKey> = {
@@ -41,13 +38,11 @@ const FIELD_ERROR_KEYS: Record<FieldId, MessageKey> = {
 };
 
 function ReportForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const recurrence = searchParams.get("mode") === "recurrence";
   const sourceParam = searchParams.get("source") ?? "";
   const sourceIssueId = recurrence && UUID.test(sourceParam) ? sourceParam : "";
   const { loading, session, user } = useAuth();
-  const phoneVerified = Boolean(user?.phone && user.phone_confirmed_at);
   const { t } = useI18n();
   const category = issueCategory(searchParams.get("category") ?? "")?.id ?? "";
   const queryDistrict = findDistrict(searchParams.get("district") ?? "")?.id;
@@ -59,12 +54,14 @@ function ReportForm() {
   const [realName, setRealName] = useState("");
   const [gender, setGender] = useState<CitizenGender | "">("");
   const [ageGroup, setAgeGroup] = useState<CitizenAgeGroup | "">("");
-  const [cellPhoneInput, setCellPhone] = useState("");
+  const [cellPhoneInput, setCellPhone] = useState<string | null>(null);
   const [lineId, setLineId] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
+  const [preparingPhoto, setPreparingPhoto] = useState(false);
+  const [photoStatus, setPhotoStatus] = useState("");
   const [recurrenceToken, setRecurrenceToken] = useState("");
   const [captureExpiresAt, setCaptureExpiresAt] = useState("");
   const [preparingEvidence, setPreparingEvidence] = useState(false);
@@ -73,8 +70,9 @@ function ReportForm() {
   const [message, setMessage] = useState("");
   const [invalidFields, setInvalidFields] = useState<FieldId[]>([]);
   const submissionKey = useRef<string | null>(null);
+  const photoPreparationId = useRef(0);
   const errorSummary = useRef<HTMLDivElement>(null);
-  const cellPhone = cellPhoneInput || user?.phone || "";
+  const cellPhone = cellPhoneInput ?? user?.phone ?? "";
   if (!category) redirect("/#category-title");
   const latitudeNumber = Number(latitude);
   const longitudeNumber = Number(longitude);
@@ -119,9 +117,25 @@ function ReportForm() {
     };
   }, [latitudeNumber, longitudeNumber, positionKey]);
 
-  const selectPhoto = (nextPhoto: File | null) => {
-    setPhoto(nextPhoto);
+  const selectPhoto = async (nextPhoto: File | null) => {
+    const preparationId = ++photoPreparationId.current;
+    setPhoto(null);
+    setPhotoStatus("");
     setInvalidFields((fields) => fields.filter((field) => field !== "photo"));
+    if (!nextPhoto) return;
+
+    setPreparingPhoto(true);
+    try {
+      const preparedPhoto = await prepareIssuePhoto(nextPhoto);
+      if (preparationId !== photoPreparationId.current) return;
+      setPhoto(preparedPhoto);
+    } catch {
+      if (preparationId !== photoPreparationId.current) return;
+      setPhotoStatus(t("report.photoPrepareError"));
+      setInvalidFields((fields) => fields.includes("photo") ? fields : [...fields, "photo"]);
+    } finally {
+      if (preparationId === photoPreparationId.current) setPreparingPhoto(false);
+    }
   };
 
   const startRecurrenceCapture = async () => {
@@ -156,7 +170,10 @@ function ReportForm() {
         }
         setRecurrenceToken(result.token);
         setCaptureExpiresAt(result.expiresAt);
+        photoPreparationId.current += 1;
         setPhoto(null);
+        setPreparingPhoto(false);
+        setPhotoStatus("");
         setInvalidFields((fields) => fields.filter((field) => field !== "recurrence"));
         setEvidenceMessage(t("report.captureReady"));
       } catch (error) {
@@ -174,6 +191,10 @@ function ReportForm() {
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (preparingPhoto) {
+      setMessage(t("report.photoPreparing"));
+      return;
+    }
     const normalizedPhone = normalizeCellPhone(cellPhone);
     const nextInvalid: FieldId[] = [];
     if (!districtId) nextInvalid.push("district");
@@ -233,16 +254,11 @@ function ReportForm() {
     setSubmitting(true);
     setMessage(t("report.saving"));
     try {
-      const response = await fetch("/api/issues", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${activeSession.access_token}` },
-        body: form,
-      });
-      const result = await response.json() as SubmitResult;
-      if (!response.ok || !result.issue) throw new Error(t("report.submitError"));
-      router.push(`/tickets/${encodeURIComponent(result.issue.ticketNumber)}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : t("report.submitError"));
+      const issue = await submitIssueForm(form, activeSession.access_token);
+      const ticketUrl = new URL(`/tickets/${encodeURIComponent(issue.ticketNumber)}`, window.location.origin).href;
+      window.location.assign(ticketUrl);
+    } catch {
+      setMessage(t("report.submitError"));
       setSubmitting(false);
     }
   };
@@ -278,7 +294,7 @@ function ReportForm() {
           <p>{t("report.intro")}</p>
         </div>
 
-        <form className="report-form" noValidate onSubmit={(event) => void submit(event)} aria-busy={submitting}>
+        <form className="report-form" noValidate onSubmit={(event) => void submit(event)} aria-busy={submitting || preparingPhoto}>
           {invalidFields.length > 0 && (
             <div ref={errorSummary} className="error-summary" role="alert" tabIndex={-1}>
               <h2>{t("report.errorSummary")}</h2>
@@ -396,7 +412,7 @@ function ReportForm() {
                 </label>
                 <label>
                   {t("report.cellPhone")}
-                  <input id="cellPhone" name="cellPhone" type="tel" autoComplete="tel" maxLength={21} required readOnly={phoneVerified} value={cellPhone} placeholder="0912-345-678" aria-invalid={invalidFields.includes("cellPhone")} aria-describedby={invalidFields.includes("cellPhone") ? "cellPhone-error" : undefined} onChange={(event) => { setCellPhone(event.target.value); setInvalidFields((fields) => fields.filter((field) => field !== "cellPhone")); }} />
+                  <input id="cellPhone" name="cellPhone" type="tel" autoComplete="tel" maxLength={21} required value={cellPhone} placeholder="0912-345-678" aria-invalid={invalidFields.includes("cellPhone")} aria-describedby={invalidFields.includes("cellPhone") ? "cellPhone-error" : undefined} onChange={(event) => { setCellPhone(event.target.value); setInvalidFields((fields) => fields.filter((field) => field !== "cellPhone")); }} />
                   {invalidFields.includes("cellPhone") && <span id="cellPhone-error" className="field-error">{t(FIELD_ERROR_KEYS.cellPhone)}</span>}
                 </label>
                 <label>
@@ -433,8 +449,12 @@ function ReportForm() {
               {recurrence ? (
                 <div className="file-field">
                   <strong>{t("report.livePhoto")}</strong>
-                  {recurrenceToken ? <CameraCapture key={recurrenceToken} onCapture={selectPhoto} onStatus={setEvidenceMessage} /> : <p id="photo-help">{t("report.cameraPrepareHelp")}</p>}
-                  {photo && <small>{photo.name} · {(photo.size / 1024 / 1024).toFixed(1)} MB</small>}
+                  {recurrenceToken ? <CameraCapture key={recurrenceToken} onCapture={(file) => void selectPhoto(file)} onStatus={setEvidenceMessage} /> : <p id="photo-help">{t("report.cameraPrepareHelp")}</p>}
+                  {recurrenceToken && (
+                    <small id="photo-help" className={photoStatus ? "field-error" : undefined} data-photo-bytes={photo?.size}>
+                      {preparingPhoto ? t("report.photoPreparing") : photo ? `${photo.name} · ${(photo.size / 1024 / 1024).toFixed(1)} MB` : photoStatus || t("report.photoHelp")}
+                    </small>
+                  )}
                   {invalidFields.includes("photo") && <span id="photo-error" className="field-error">{t(FIELD_ERROR_KEYS.photo)}</span>}
                 </div>
               ) : null}
@@ -450,9 +470,10 @@ function ReportForm() {
                         className="visually-hidden"
                         type="file"
                         accept="image/jpeg,image/png,image/webp"
+                        disabled={preparingPhoto}
                         aria-invalid={invalidFields.includes("photo")}
                         aria-describedby={invalidFields.includes("photo") ? "photo-error photo-help" : "photo-help"}
-                        onChange={(event) => selectPhoto(event.target.files?.[0] ?? null)}
+                        onChange={(event) => void selectPhoto(event.target.files?.[0] ?? null)}
                       />
                     </label>
                     <label className="button secondary photo-source-button">
@@ -463,13 +484,16 @@ function ReportForm() {
                         type="file"
                         accept="image/jpeg,image/png,image/webp"
                         capture="environment"
+                        disabled={preparingPhoto}
                         aria-invalid={invalidFields.includes("photo")}
                         aria-describedby={invalidFields.includes("photo") ? "photo-error photo-help" : "photo-help"}
-                        onChange={(event) => selectPhoto(event.target.files?.[0] ?? null)}
+                        onChange={(event) => void selectPhoto(event.target.files?.[0] ?? null)}
                       />
                     </label>
                   </div>
-                  <small id="photo-help">{photo ? `${photo.name} · ${(photo.size / 1024 / 1024).toFixed(1)} MB` : t("report.photoHelp")}</small>
+                  <small id="photo-help" className={photoStatus ? "field-error" : undefined} data-photo-bytes={photo?.size}>
+                    {preparingPhoto ? t("report.photoPreparing") : photo ? `${photo.name} · ${(photo.size / 1024 / 1024).toFixed(1)} MB` : photoStatus || t("report.photoHelp")}
+                  </small>
                   {invalidFields.includes("photo") && <span id="photo-error" className="field-error">{t(FIELD_ERROR_KEYS.photo)}</span>}
                 </fieldset>
               )}
@@ -478,8 +502,8 @@ function ReportForm() {
 
           {(!recurrence || photo) && (
             <div className="submit-bar">
-              <button className="button primary" type="submit" disabled={submitting}>
-                {submitting ? t("report.submitting") : t("report.submit")}
+              <button className="button primary" type="submit" disabled={submitting || preparingPhoto}>
+                {preparingPhoto ? t("report.photoPreparing") : submitting ? t("report.submitting") : t("report.submit")}
               </button>
             </div>
           )}

@@ -85,6 +85,7 @@ type AdminDetailPayload = {
 type AdminDetail = Omit<AdminDetailPayload, "issue"> & { issue: AdminDetailIssue };
 type StaffAccessState = { membershipActive: boolean; numberVerified: boolean; authorized: boolean };
 type NotificationSummary = { pending: number; failed: number; sent: number; aiFailed: number; aiAssistFailed: number };
+type MapListSelection = { markerId: string; issueIds: string[] };
 const isAdminListIssue = (issue: AdminIssue | AdminListIssue): issue is AdminListIssue => "effectiveRisk" in issue;
 
 const formatTime = (value: string, locale: AdminLocale) => new Intl.DateTimeFormat(locale === "zh-TW" ? "zh-TW" : "en-US", {
@@ -153,6 +154,7 @@ export default function AdminPage() {
   const [recurrenceOnly, setRecurrenceOnly] = useState(false);
   const [problemSpotOnly, setProblemSpotOnly] = useState(false);
   const [listResult, setListResult] = useState<{ items: AdminListIssue[]; total: number }>({ items: [], total: 0 });
+  const [mapListSelection, setMapListSelection] = useState<MapListSelection | null>(null);
   const [notificationSummary, setNotificationSummary] = useState<NotificationSummary>({ pending: 0, failed: 0, sent: 0, aiFailed: 0, aiAssistFailed: 0 });
   const [selected, setSelected] = useState<AdminDetail | null>(null);
   const [department, setDepartment] = useState<Department>("environmental_services");
@@ -345,12 +347,27 @@ export default function AdminPage() {
   const pageCount = Math.max(1, Math.ceil(listResult.total / pageSize));
   const totalStatusCount = Object.values(statusCounts).reduce((total, count) => total + count, 0);
   const displayedIssues: Array<AdminIssue | AdminListIssue> = adminView === "list" ? listResult.items : mapIssues;
+  const markerSelectedId = mapListSelection?.markerId ?? selectedId;
+  const highlightedIssueIds = new Set(mapListSelection?.issueIds ?? []);
   const mapMarkerIssues = [...mapIssues.reduce((markers, issue) => {
     const key = issue.problemSpot ? issue.problemSpotId : issue.id;
-    if (!markers.has(key) || issue.id === selectedId) markers.set(key, issue);
+    if (!markers.has(key) || issue.id === markerSelectedId) markers.set(key, issue);
     return markers;
   }, new Map<string, AdminListIssue>()).values()];
   const selectedDistrict = districtFilter === "all" ? undefined : findDistrict(districtFilter);
+
+  const selectMapIssues = (issueId: string) => {
+    const selectedIssue = mapIssues.find((issue) => issue.id === issueId);
+    if (!selectedIssue) return;
+    const issueIds = (selectedIssue.problemSpot
+      ? mapIssues.filter((issue) => issue.problemSpot && issue.problemSpotId === selectedIssue.problemSpotId)
+      : [selectedIssue]
+    ).map((issue) => issue.id);
+    setMapListSelection({ markerId: issueId, issueIds });
+    window.requestAnimationFrame(() => {
+      document.getElementById(`admin-issue-${issueIds[0]}`)?.scrollIntoView({ block: "nearest" });
+    });
+  };
 
   const applyDetail = (payload: AdminDetailPayload) => {
     const detail: AdminDetail = {
@@ -713,7 +730,7 @@ export default function AdminPage() {
 
       <div className="admin-view-controls" role="group" aria-label={t("Map view")}>
         <button type="button" className="button tertiary" aria-pressed={adminView === "map"} onClick={() => setAdminView("map")}>{t("Map view")}</button>
-        <button type="button" className="button tertiary" aria-pressed={adminView === "list"} onClick={() => setAdminView("list")}>{t("Full list")}</button>
+        <button type="button" className="button tertiary" aria-pressed={adminView === "list"} onClick={() => { setAdminView("list"); setMapListSelection(null); }}>{t("Full list")}</button>
         <label>{t("Risk")}<select value={riskFilter} onChange={(event) => { setRiskFilter(event.target.value); setListPage(1); }}><option value="all">{t("All risks")}</option>{[5,4,3,2,1].map((level) => <option value={level} key={level}>{adminRiskLabel(adminLocale, level)}</option>)}</select></label>
         <label className="confirm-row"><input type="checkbox" checked={recurrenceOnly} onChange={(event) => { setRecurrenceOnly(event.target.checked); setListPage(1); }} />{t("Has recurrence")}</label>
         <label className="confirm-row"><input type="checkbox" checked={problemSpotOnly} onChange={(event) => { setProblemSpotOnly(event.target.checked); setListPage(1); }} />{t("Problem spots only")}</label>
@@ -737,13 +754,14 @@ export default function AdminPage() {
                 ? `${issue.urgent ? t("Urgent problem spot") : t("Problem spot")} · ${issue.issueCount} ${t("reports")} · ${adminCategoryLabel(adminLocale, issue.category)}`
                 : `${issue.ticketNumber} ${issue.title}${issue.urgent ? ` · ${t("Urgent problem spot")}` : ""}`,
             }))}
-            selectedId={selected?.issue.id}
+            selectedId={markerSelectedId}
             center={selectedDistrict}
             zoom={selectedDistrict ? 14 : 10}
-            onPinSelect={(id) => void openIssue(id)}
+            onPinSelect={selectMapIssues}
             onViewportChange={setMapViewport}
             ariaLabel={t("All complaint PIN map")}
             palette="admin"
+            locateOnLoad
             currentLocation={{
               button: t("Go to current location"),
               locating: t("Finding current location…"),
@@ -760,11 +778,14 @@ export default function AdminPage() {
           </div>
           {displayedIssues.length ? (
             <ul>
-              {displayedIssues.map((issue) => (
-                <li key={issue.id}>
+              {displayedIssues.map((issue) => {
+                const mapHighlighted = highlightedIssueIds.has(issue.id);
+                return (
+                <li id={`admin-issue-${issue.id}`} key={issue.id} data-map-highlighted={mapHighlighted ? "true" : undefined}>
                   <button type="button" onClick={() => void openIssue(issue.id)} disabled={busy}>
                     <span className={`status-dot status-${issue.status}`} aria-hidden="true" />
                     <span>
+                      {mapHighlighted && <span className="visually-hidden">{t("Selected on map")}</span>}
                       <strong>{issue.title}</strong>
                       <small>{issue.ticketNumber} · {adminCategoryLabel(adminLocale, issue.category)}</small>
                       {isAdminListIssue(issue) && <small>{t("Risk")} {issue.effectiveRisk ?? t("Evaluation required")} · {t("Recurrences")} {issue.recurrenceCount} {t("reports")}{issue.problemSpot ? ` · ${t("Problem spot")} ${issue.issueCount} ${t("reports")}` : ""}{issue.urgent ? ` · ${t("Urgent")}` : ""}</small>}
@@ -773,7 +794,8 @@ export default function AdminPage() {
                     <span className={`status-pill status-${issue.status}`}>{adminStatusLabel(adminLocale, issue.status)}</span>
                   </button>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           ) : (
             <div className="empty-list">

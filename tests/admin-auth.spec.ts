@@ -15,6 +15,8 @@ const env = (name: string) => process.env[name] ?? localEnv[name];
 
 test("admin must complete email OTP and staff number before dashboard access", async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.context().grantPermissions(["geolocation"]);
+  await page.context().setGeolocation({ latitude: 24.9937, longitude: 121.301 });
   await page.setExtraHTTPHeaders({ "x-forwarded-for": `2001:db8:${Date.now().toString(16).slice(-4)}::1` });
   const url = env("NEXT_PUBLIC_SUPABASE_URL");
   const secretKey = env("SUPABASE_SECRET_KEY");
@@ -95,6 +97,45 @@ test("admin must complete email OTP and staff number before dashboard access", a
       },
       events: [{ id: "88888888-8888-4888-8888-888888888888", fromStatus: "received", toStatus: "viewed", reason: "opened", holdReason: null, nextCheckAt: null, finalAnswer: null, createdAt: "2026-08-16T01:00:00Z" }],
     };
+    const problemSpotId = "66666666-8888-4888-8888-666666666666";
+    const groupedMapItems = Array.from({ length: 5 }, (_, index) => ({
+      ...issue,
+      id: `99999999-9999-4999-8999-99999999999${9 - index}`,
+      ticket_number: `CP-20260816-00099${9 - index}`,
+      title: index === 0 ? issue.title : `묶음 민원 ${index + 1}`,
+      latitude: issue.latitude + index * 0.00001,
+      longitude: issue.longitude + index * 0.00001,
+      effective_risk: 4,
+      field_status: "active",
+      recurrence_count: 2,
+      urgent: false,
+      problem_spot_id: problemSpotId,
+      issue_count: 5,
+      problem_spot: true,
+    }));
+    const standaloneMapItem = {
+      ...issue,
+      id: "99999999-9999-4999-8999-999999999994",
+      ticket_number: "CP-20260816-000994",
+      title: "단일 민원",
+      latitude: 24.9,
+      longitude: 121.4,
+      effective_risk: 2,
+      field_status: "active",
+      recurrence_count: 0,
+      urgent: false,
+      problem_spot_id: "55555555-8888-4888-8888-555555555555",
+      issue_count: 1,
+      problem_spot: false,
+    };
+    const overlappingMapItem = {
+      ...standaloneMapItem,
+      id: "99999999-9999-4999-8999-999999999993",
+      ticket_number: "CP-20260816-000993",
+      title: "겹친 단일 민원",
+      latitude: issue.latitude + 0.00005,
+      longitude: issue.longitude + 0.00005,
+    };
     await page.route("**/rest/v1/rpc/staff_issue_status_counts", (route) => route.fulfill({ json: {
       received: 0, viewed: 1, in_progress: 0, on_hold: 0, completed: 0,
     } }));
@@ -102,8 +143,8 @@ test("admin must complete email OTP and staff number before dashboard access", a
     await page.route("**/rest/v1/rpc/list_staff_issue_map", (route) => {
       mapQueries.push(route.request().postDataJSON() as Record<string, unknown>);
       return route.fulfill({ json: {
-        total: 1, truncated: false,
-        items: [{ ...issue, effective_risk: 4, field_status: "active", recurrence_count: 2, urgent: false, problem_spot_id: "66666666-8888-4888-8888-666666666666", issue_count: 6, problem_spot: true }],
+        total: 7, truncated: false,
+        items: [...groupedMapItems, overlappingMapItem, standaloneMapItem],
       } });
     });
     await page.route("**/rest/v1/rpc/list_staff_issues", (route) => route.fulfill({ json: {
@@ -122,6 +163,13 @@ test("admin must complete email OTP and staff number before dashboard access", a
     } }));
     await page.reload();
     await expect.poll(() => mapQueries.length).toBeGreaterThan(0);
+    await expect(page.locator(".map-current-location")).toBeVisible();
+    await expect.poll(() => mapQueries.some((query) => Number(query.target_south) < 24.9937
+      && Number(query.target_north) > 24.9937
+      && Number(query.target_west) < 121.301
+      && Number(query.target_east) > 121.301
+      && Number(query.target_north) - Number(query.target_south) < 0.01
+      && Number(query.target_east) - Number(query.target_west) < 0.01)).toBe(true);
     const allStatusTab = page.getByRole("button", { name: "All 1" });
     await expect(allStatusTab).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "Under staff review 1" }).click();
@@ -132,7 +180,20 @@ test("admin must complete email OTP and staff number before dashboard access", a
     await expect.poll(() => mapQueries.length).toBeGreaterThan(filteredQueryCount);
     expect(mapQueries.at(-1)?.target_status).toBeNull();
     await expect(page.locator(".map-category-pin.problem-spot")).toBeVisible();
-    await expect(page.locator(".map-problem-count")).toHaveText("6");
+    await expect(page.locator(".map-problem-count")).toHaveText("5");
+    await page.locator('.leaflet-marker-icon[title^="Problem spot"]', { has: page.locator(".map-category-pin.problem-spot") }).click();
+    await expect(page.locator('.admin-list li[data-map-highlighted="true"]')).toHaveCount(5);
+    await expect(page.locator(".map-category-pin.problem-spot")).toHaveClass(/selected/);
+    await expect(page.locator(".admin-sheet")).toHaveCount(0);
+    const problemSpotMarker = page.locator('.leaflet-marker-icon[title^="Problem spot"]', { has: page.locator(".map-category-pin.problem-spot") });
+    const overlappingMarker = page.locator('.leaflet-marker-icon[title="CP-20260816-000993 겹친 단일 민원"]');
+    await expect(overlappingMarker.locator(".map-category-pin")).toHaveAttribute("data-pin-latitude", "24.99375");
+    await expect(overlappingMarker.locator(".map-category-pin")).toHaveAttribute("data-pin-longitude", "121.30105");
+    const [problemSpotBox, overlappingBox] = await Promise.all([problemSpotMarker.boundingBox(), overlappingMarker.boundingBox()]);
+    expect(Math.hypot(
+      (problemSpotBox?.x ?? 0) - (overlappingBox?.x ?? 0),
+      (problemSpotBox?.y ?? 0) - (overlappingBox?.y ?? 0),
+    )).toBeLessThan(5);
     await page.getByRole("combobox", { name: "District", exact: true }).selectOption("taoyuan");
     await expect(page.locator(".admin-map .issue-map")).toHaveAttribute("data-center-latitude", "24.99735");
     await expect(page.locator(".admin-map .issue-map")).toHaveAttribute("data-center-longitude", "121.29602");

@@ -50,9 +50,12 @@ function drawMarkers(
   palette: Props["palette"] = "citizen",
 ) {
   layer.clearLayers();
-  (state.pins ?? []).forEach((pin) => {
+  const pins = state.pins ?? [];
+  pins.forEach((pin) => {
     const visual = document.createElement("span");
     visual.className = `map-category-pin${pin.id === state.selectedId ? " selected" : ""}${pin.urgent ? " urgent" : ""}${pin.problemSpotCount ? " problem-spot" : ""}`;
+    visual.dataset.pinLatitude = String(pin.latitude);
+    visual.dataset.pinLongitude = String(pin.longitude);
     const glyph = document.createElement("span");
     glyph.textContent = issueCategory(pin.category)?.icon ?? "📍";
     visual.append(glyph);
@@ -67,6 +70,7 @@ function drawMarkers(
     const marker = leaflet.marker([pin.latitude, pin.longitude], {
       alt: pin.label,
       title: pin.label,
+      zIndexOffset: (pin.problemSpotCount ? 1000 : 0) + (pin.urgent ? 500 : 0),
       icon: leaflet.divIcon({
         className: "map-category-marker",
         html: visual,
@@ -171,7 +175,8 @@ export function IssueMap({ pins = [], draft, selectedId, center, zoom, onMapClic
 
   useEffect(() => {
     const currentLayers = layers.current;
-    if (!map.current || !currentLayers) return;
+    const currentMap = map.current;
+    if (!currentMap || !currentLayers) return;
     const redraw = async () => {
       const leaflet = await import("leaflet");
       if (layers.current === currentLayers) {

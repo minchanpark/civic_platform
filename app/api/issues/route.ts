@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { assessIssueRisk } from "@/lib/ai-risk";
 import { reverseGeocode } from "@/lib/geocoding";
 import { IssueInputError, normalizeCellPhone } from "@/lib/issues";
 import { getSupabaseSecretClient, serverDigest } from "@/lib/supabase/server";
@@ -139,26 +138,7 @@ export async function POST(request: Request) {
     return jsonError("민원 접수 결과를 확인하지 못했습니다.", 502);
   }
 
-  if (result.created === true) {
-    const assessment = await assessIssueRisk({
-      title: parsed.input.title,
-      body: parsed.input.body,
-      category: parsed.input.category,
-    });
-    if (assessment) {
-      const recorded = await secret.rpc("record_issue_ai_assessment", {
-        target_issue_id: result.id,
-        target_risk_level: assessment.riskLevel,
-        target_risk_reason_codes: assessment.riskReasonCodes,
-        target_filter_reason_codes: assessment.filterReasonCodes,
-        target_input_scope: assessment.inputScope,
-        target_model: assessment.model,
-        target_model_version: assessment.modelVersion,
-      });
-      if (recorded.error) console.error("AI risk assessment could not be recorded", { code: recorded.error.code });
-    }
-  }
-
+  // The insert trigger queues risk evaluation; the scheduled worker handles it separately.
   return issueResponse({
     id: result.id,
     ticket_number: result.ticketNumber,

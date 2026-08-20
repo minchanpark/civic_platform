@@ -55,6 +55,7 @@ const zh = {
   "Current location is unavailable. Check location permission.": "無法確認目前位置，請檢查位置權限。",
   "Current location is outside the Taoyuan service area.": "目前位置不在桃園市服務範圍內。",
   "Complaint list": "陳情列表",
+  "Selected on map": "已在地圖選取",
   "Zoom in to load more": "請放大地圖以載入更多",
   "Evaluation required": "需要評估",
   "Recurrences": "再發",
